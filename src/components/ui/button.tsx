@@ -1,0 +1,43 @@
+import * as React from 'react'
+import { Slot } from '@radix-ui/react-slot'
+import { cva, type VariantProps } from 'class-variance-authority'
+import { cn } from '@/lib/utils'
+
+const buttonVariants = cva(
+  'inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-semibold ring-offset-background transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-900/20 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:-translate-y-[1px] active:scale-[0.98]',
+  {
+    variants: {
+      variant: {
+        default: 'bg-emerald-700 text-white shadow-[0_14px_28px_-18px_rgba(4,120,87,0.85)] hover:bg-emerald-800',
+        destructive: 'bg-rose-600 text-white shadow-[0_14px_28px_-20px_rgba(225,29,72,0.8)] hover:bg-rose-700',
+        outline: 'border border-slate-200/80 bg-white/90 text-slate-800 shadow-[0_12px_28px_-24px_rgba(15,23,42,0.5)] hover:border-emerald-200 hover:bg-emerald-50/70 hover:text-emerald-950',
+        secondary: 'bg-slate-900 text-white hover:bg-slate-800',
+        ghost: 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-950',
+        link: 'text-primary underline-offset-4 hover:underline',
+      },
+      size: {
+        default: 'h-10 px-4 py-2',
+        sm: 'h-9 rounded-xl px-3',
+        lg: 'h-11 rounded-xl px-8',
+        icon: 'h-10 w-10',
+      },
+    },
+    defaultVariants: { variant: 'default', size: 'default' },
+  }
+)
+
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean
+}
+
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : 'button'
+    return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+  }
+)
+Button.displayName = 'Button'
+
+export { Button, buttonVariants }

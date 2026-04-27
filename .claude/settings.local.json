@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx skills *)",
+      "Bash(open http://localhost:5178/auth)",
+      "Bash(open http://localhost:5178/)",
+      "Bash(pkill -f \"vite --port 5178\")",
+      "Bash(open http://localhost:5179/auth)",
+      "Bash(open http://localhost:5179/)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
