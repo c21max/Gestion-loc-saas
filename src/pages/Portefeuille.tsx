@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { supabase, isDemoMode } from '@/lib/supabase'
+import { isDemoMode } from '@/lib/supabase'
 import { DEMO_PORTEFEUILLE } from '@/lib/demo-data'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -12,18 +12,19 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { currentMonthStr, eur } from '@/lib/format'
 import { Building2, CreditCard, Receipt, Search, ChevronRight, Plus, Users } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
-import type { Proprietaire, Bien, RentalUnit, Locataire, Paiement } from '@/types/database'
+import type { RentalUnit, Locataire, Paiement } from '@/types/database'
 import { useAuth } from '@/lib/auth'
 import { useToast } from '@/hooks/use-toast'
 import { EmptyState, PageHeader, SkeletonBlock } from '@/components/ui/page'
+import { motion } from 'framer-motion'
+import {
+  createPropertyWithUnit,
+  listPortefeuille,
+  listPortfolioPayments,
+  type PortefeuilleData,
+} from '@/api/portefeuille.api'
 
 type ViewMode = 'par_bien' | 'par_proprietaire'
-
-type PortefeuilleData = Proprietaire & {
-  biens: (Bien & {
-    rental_units: (RentalUnit & { locataires: Locataire[] })[]
-  })[]
-}
 
 export function Portefeuille() {
   const { toast } = useToast()
@@ -51,22 +52,7 @@ export function Portefeuille() {
     queryFn: async () => {
       if (isDemoMode) return DEMO_PORTEFEUILLE as PortefeuilleData[]
 
-      const { data, error } = await supabase
-        .from('proprietaires')
-        .select(`
-          *,
-          biens (
-            *,
-            rental_units (
-              *,
-              locataires (*)
-            )
-          )
-        `)
-        .eq('agency_id', agencyId)
-        .order('nom_complet')
-      if (error) throw error
-      return (data ?? []) as PortefeuilleData[]
+      return listPortefeuille(agencyId)
     },
   })
 
@@ -77,13 +63,7 @@ export function Portefeuille() {
     enabled: isDemoMode || Boolean(agencyId),
     queryFn: async () => {
       if (isDemoMode) return [] as Paiement[]
-      const { data, error } = await supabase
-        .from('paiements')
-        .select('*')
-        .eq('agency_id', agencyId)
-        .eq('mois_concerne', moisIso)
-      if (error) throw error
-      return data as Paiement[]
+      return listPortfolioPayments(agencyId, moisIso)
     },
   })
 
@@ -93,33 +73,7 @@ export function Portefeuille() {
         toast({ title: 'Mode démo', description: 'Connectez Supabase pour activer cette action.' })
         return
       }
-      if (!agencyId) throw new Error('Aucune agence active')
-      if (!form.proprietaire_id) throw new Error('Propriétaire obligatoire')
-      if (!form.adresse.trim()) throw new Error('Adresse obligatoire')
-      if (!form.unit_libelle.trim()) throw new Error('Nom de l’unité obligatoire')
-
-      const { data: bien, error: bienError } = await supabase
-        .from('biens')
-        .insert({
-          agency_id: agencyId,
-          proprietaire_id: form.proprietaire_id,
-          adresse: form.adresse.trim(),
-          type_bien: form.type_bien.trim() || null,
-          reference_interne: form.reference_interne.trim() || null,
-          statut: 'actif',
-        })
-        .select('id')
-        .single()
-      if (bienError) throw bienError
-
-      const { error: unitError } = await supabase.from('rental_units').insert({
-        agency_id: agencyId,
-        bien_id: bien.id,
-        libelle: form.unit_libelle.trim(),
-        loyer_mensuel: Number(form.loyer_mensuel || 0),
-        charges_mensuelles: Number(form.charges_mensuelles || 0),
-      })
-      if (unitError) throw unitError
+      await createPropertyWithUnit(agencyId, form)
     },
     onSuccess: () => {
       if (!isDemoMode) {
@@ -219,10 +173,22 @@ export function Portefeuille() {
           ) : null}
         />
       ) : mode === 'par_bien' ? (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <motion.div
+          className="grid grid-cols-1 gap-4 xl:grid-cols-2"
+          initial="hidden"
+          animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.06 } } }}
+        >
           {filteredData.flatMap(p =>
             p.biens.map(b => (
-              <Card key={b.id} className="transition-all hover:-translate-y-0.5 hover:shadow-md">
+              <motion.div
+                key={b.id}
+                variants={{
+                  hidden: { opacity: 0, y: 12 },
+                  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] } },
+                }}
+              >
+              <Card className="h-full transition-shadow hover:shadow-[0_4px_20px_-4px_rgba(15,23,42,0.1)]">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -272,22 +238,35 @@ export function Portefeuille() {
                   </div>
                 </CardContent>
               </Card>
+              </motion.div>
             ))
           )}
-        </div>
+        </motion.div>
       ) : (
-        <div className="space-y-6">
+        <motion.div
+          className="space-y-4"
+          initial="hidden"
+          animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.07 } } }}
+        >
           {filteredData.map(p => (
-            <Card key={p.id}>
+            <motion.div
+              key={p.id}
+              variants={{
+                hidden: { opacity: 0, y: 10 },
+                show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } },
+              }}
+            >
+            <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle>{p.nom_complet}</CardTitle>
                   <Badge variant="outline">{p.biens.length} bien{p.biens.length > 1 ? 's' : ''}</Badge>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-2">
                 {p.biens.map(b => (
-                  <Link key={b.id} to={`/biens/${b.id}`} className="block rounded-2xl border border-slate-200 p-3 transition-colors hover:bg-emerald-50/35">
+                  <Link key={b.id} to={`/biens/${b.id}`} className="block rounded-xl border border-slate-100 bg-slate-50/60 p-3 transition-colors hover:bg-slate-100">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="font-medium text-sm">{b.adresse}</p>
@@ -302,8 +281,9 @@ export function Portefeuille() {
                 ))}
               </CardContent>
             </Card>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

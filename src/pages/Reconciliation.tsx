@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase, isDemoMode } from '@/lib/supabase'
+import { isDemoMode } from '@/lib/supabase'
 import {
   DEMO_RECONCILIATION_LOCATAIRES, DEMO_EXPECTED_RENTS,
   DEMO_PAIEMENTS, DEMO_BANK_MOVEMENTS, DEMO_MOIS_ISO,
@@ -15,11 +15,20 @@ import { CheckCircle, AlertCircle, Clock, XCircle, Search, Zap } from 'lucide-re
 import { useToast } from '@/hooks/use-toast'
 import type { BankMovement, MonthlyExpectedRent, Paiement } from '@/types/database'
 import { useAuth } from '@/lib/auth'
-import { MetricCard, PageHeader, SkeletonBlock } from '@/components/ui/page'
+import { MetricCard, PageHeader, PageLoader } from '@/components/ui/page'
+import { motion } from 'framer-motion'
+import { cn } from '@/lib/utils'
+import { queryKeys } from '@/api/queryKeys'
+import { getReconciliationData } from '@/api/reconciliation.api'
+import { assignMovementToTenant } from '@/services/reconciliation.service'
 
 type StatutRow = 'paye_confirme' | 'paiement_probable' | 'partiel' | 'impaye'
 
-const STATUT_CONFIG: Record<StatutRow, { label: string; variant: 'success' | 'info' | 'warning' | 'danger'; icon: React.ComponentType<{ className?: string }> }> = {
+const STATUT_CONFIG: Record<StatutRow, {
+  label: string
+  variant: 'success' | 'info' | 'warning' | 'danger'
+  icon: React.ComponentType<{ className?: string }>
+}> = {
   paye_confirme: { label: 'Payé', variant: 'success', icon: CheckCircle },
   paiement_probable: { label: 'Probable', variant: 'info', icon: Clock },
   partiel: { label: 'Partiel', variant: 'warning', icon: AlertCircle },
@@ -45,7 +54,7 @@ export function Reconciliation() {
   const moisIso = `${moisStr}-01`
 
   const { data, isLoading } = useQuery({
-    queryKey: ['reconciliation', agencyId, moisStr],
+    queryKey: queryKeys.reconciliation(agencyId, moisStr),
     enabled: isDemoMode || Boolean(agencyId),
     queryFn: async () => {
       if (isDemoMode) {
@@ -57,18 +66,7 @@ export function Reconciliation() {
         }
       }
 
-      const [locRes, merRes, paiRes, movRes] = await Promise.all([
-        supabase.from('locataires').select('*, rental_units (*, biens (*, proprietaires (*)))').eq('agency_id', agencyId).eq('statut', 'actif'),
-        supabase.from('monthly_expected_rents').select('*').eq('agency_id', agencyId).eq('mois_concerne', moisIso),
-        supabase.from('paiements').select('*').eq('agency_id', agencyId).eq('mois_concerne', moisIso),
-        supabase.from('bank_movements').select('*').eq('agency_id', agencyId).eq('status', 'a_valider'),
-      ])
-      return {
-        locataires: locRes.data ?? [],
-        expected: merRes.data as MonthlyExpectedRent[] ?? [],
-        paiements: paiRes.data as Paiement[] ?? [],
-        movements: movRes.data as BankMovement[] ?? [],
-      }
+      return getReconciliationData(agencyId, moisIso)
     },
   })
 
@@ -112,47 +110,23 @@ export function Reconciliation() {
         toast({ title: 'Mode démo', description: 'Connectez Supabase pour affecter des paiements.' })
         return
       }
-
       const mouv = movements.find(m => m.id === selectedMouvement)
       const loc = locataires.find(l => l.id === targetLocataire) as (typeof locataires[0] & { rental_units: { id: string; biens: { id: string } } }) | undefined
       if (!mouv || !loc) throw new Error('Mouvement ou locataire introuvable')
       if (!agencyId) throw new Error('Aucune agence active')
 
-      const moisConcerne = `${targetMois}-01`
-      const paiement = {
-        agency_id: agencyId,
-        locataire_id: loc.id,
-        rental_unit_id: loc.rental_units.id,
-        bien_id: loc.rental_units.biens.id,
-        mois_concerne: moisConcerne,
-        date_paiement: mouv.operation_date,
-        loyer_htva: mouv.amount,
-        charges: 0,
-        total_percu: mouv.amount,
-        statut: 'paye' as const,
-        bank_movement_id: mouv.id,
-      }
-
-      const { data: paieData, error: paieErr } = await supabase.from('paiements').insert(paiement).select().single()
-      if (paieErr) throw paieErr
-
-      await supabase.from('bank_movements').update({ status: 'paiement_cree', paiement_id: paieData.id }).eq('id', mouv.id).eq('agency_id', agencyId)
-
-      if (memoriser && mouv.counterparty_iban) {
-        await supabase.from('payment_aliases').upsert({
-          agency_id: agencyId,
-          locataire_id: loc.id,
-          bien_id: loc.rental_units.biens.id,
-          counterparty_iban: mouv.counterparty_iban,
-          counterparty_name_normalized: mouv.counterparty_name ?? null,
-          source: 'manual',
-        }, { onConflict: 'locataire_id,counterparty_iban,counterparty_name_normalized' })
-      }
+      await assignMovementToTenant({
+        agencyId,
+        movement: mouv,
+        locataire: loc,
+        month: targetMois,
+        rememberAlias: memoriser,
+      })
     },
     onSuccess: () => {
       if (!isDemoMode) {
         toast({ title: 'Paiement créé', description: 'Le mouvement a été affecté avec succès.' })
-        qc.invalidateQueries({ queryKey: ['reconciliation', agencyId] })
+        qc.invalidateQueries({ queryKey: queryKeys.reconciliation(agencyId) })
       }
       setSelectedMouvement('')
       setTargetLocataire('')
@@ -162,59 +136,51 @@ export function Reconciliation() {
 
   const mouvementsNonReconnus = movements.filter(m => m.status === 'a_valider' && m.direction === 'credit')
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <SkeletonBlock className="h-10 w-80" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SkeletonBlock className="h-24" />
-          <SkeletonBlock className="h-24" />
-          <SkeletonBlock className="h-24" />
-          <SkeletonBlock className="h-24" />
-        </div>
-        <SkeletonBlock className="h-96" />
-      </div>
-    )
-  }
+  if (isLoading) return <PageLoader />
+
+  const tauxRecouvrement = kpis.totalAttendu > 0 ? (kpis.totalPercu / kpis.totalAttendu) * 100 : 0
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Réconciliation"
-        description={`Validation des loyers et mouvements bancaires - ${moisFr(moisIso)}`}
+        description={`Validation des loyers et mouvements bancaires — ${moisFr(moisIso)}`}
         actions={
           <Input
             type="month"
             value={moisStr}
             onChange={e => setMoisStr(e.target.value)}
-            className="w-44 bg-white"
+            className="w-44 border-slate-200 bg-white shadow-none"
           />
         }
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Total attendu" value={eur(kpis.totalAttendu)} />
-        <MetricCard label="Total reçu" value={eur(kpis.totalPercu)} tone="green" />
-        <MetricCard label="Reste dû" value={eur(kpis.totalAttendu - kpis.totalPercu)} tone="amber" />
-        <MetricCard label="Impayés" value={`${kpis.nbImpayes} / ${rows.length}`} tone="red" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard index={0} label="Total attendu" value={eur(kpis.totalAttendu)} />
+        <MetricCard index={1} label="Total reçu" value={eur(kpis.totalPercu)} tone="green" progress={tauxRecouvrement} />
+        <MetricCard index={2} label="Reste dû" value={eur(kpis.totalAttendu - kpis.totalPercu)} tone="amber" />
+        <MetricCard index={3} label="Impayés" value={`${kpis.nbImpayes} / ${rows.length}`} tone="red" />
       </div>
 
+      {/* Loyers du mois */}
       <Card>
-        <CardHeader className="gap-4">
+        <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <CardTitle>Loyers du mois</CardTitle>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <Input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Rechercher..."
-                  className="h-9 w-full bg-slate-50 pl-9 shadow-none sm:w-64"
+                  className="h-9 w-full bg-slate-50 pl-9 shadow-none sm:w-60"
                 />
               </div>
               <Select value={statusFilter} onValueChange={v => setStatusFilter(v as typeof statusFilter)}>
-                <SelectTrigger className="h-9 w-full bg-white sm:w-44"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9 w-full border-slate-200 bg-white sm:w-44">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="tous">Tous les statuts</SelectItem>
                   <SelectItem value="paye_confirme">Payés</SelectItem>
@@ -228,10 +194,17 @@ export function Reconciliation() {
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="table-pro">
+            <motion.table
+              className="table-pro"
+              initial="hidden"
+              animate="show"
+              variants={{ show: { transition: { staggerChildren: 0.03 } } }}
+            >
               <thead>
                 <tr>
-                  {['Locataire', 'Bien / unité', 'Attendu', 'Reçu', 'Différence', 'Statut', 'Mouvement', 'Action'].map(h => <th key={h}>{h}</th>)}
+                  {['Locataire', 'Bien / unité', 'Attendu', 'Reçu', 'Différence', 'Statut', 'Mouvement', 'Action'].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -239,40 +212,53 @@ export function Reconciliation() {
                   const cfg = STATUT_CONFIG[row.statut]
                   const Icon = cfg.icon
                   const unit = (row.loc as unknown as { rental_units: { libelle: string; biens: { adresse: string } } }).rental_units
+                  const diff = row.attendu - row.totalPercu
                   return (
-                    <tr key={row.loc.id}>
+                    <motion.tr
+                      key={row.loc.id}
+                      variants={{
+                        hidden: { opacity: 0, y: 4 },
+                        show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: [0.16, 1, 0.3, 1] } },
+                      }}
+                    >
                       <td className="font-medium text-slate-950">{row.loc.nom_complet}</td>
-                      <td className="text-xs text-slate-500">
-                        <div>{unit.biens.adresse}</div>
-                        <div>{unit.libelle}</div>
+                      <td>
+                        <div className="text-sm text-slate-700">{unit.biens.adresse}</div>
+                        <div className="text-[11px] text-slate-400">{unit.libelle}</div>
                       </td>
-                      <td>{row.attendu > 0 ? eur(row.attendu) : '—'}</td>
-                      <td className="font-medium">{row.totalPercu > 0 ? eur(row.totalPercu) : '—'}</td>
-                      <td className={`font-medium ${row.attendu - row.totalPercu > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                        {row.attendu > 0 ? eur(row.attendu - row.totalPercu) : '—'}
+                      <td className="text-slate-600">{row.attendu > 0 ? eur(row.attendu) : '—'}</td>
+                      <td className="font-medium text-slate-950">{row.totalPercu > 0 ? eur(row.totalPercu) : '—'}</td>
+                      <td className={cn('font-medium', diff > 0 ? 'text-rose-600' : 'text-emerald-600')}>
+                        {row.attendu > 0 ? eur(diff) : '—'}
                       </td>
                       <td>
-                        <Badge variant={cfg.variant} className="flex items-center gap-1 w-fit">
+                        <Badge variant={cfg.variant} className="flex w-fit items-center gap-1">
                           <Icon className="h-3 w-3" />
                           {cfg.label}
                         </Badge>
                       </td>
-                      <td className="text-xs text-slate-500">
-                        {row.movement ? `${eur(row.movement.amount)} — ${dateFr(row.movement.operation_date)}` : '—'}
+                      <td className="text-[12px] text-slate-400">
+                        {row.movement
+                          ? `${eur(row.movement.amount)} · ${dateFr(row.movement.operation_date)}`
+                          : '—'}
                       </td>
                       <td>
                         {row.statut !== 'paye_confirme' && (
-                          <Button variant={row.statut === 'paiement_probable' ? 'default' : 'outline'} size="sm" onClick={() => setTargetLocataire(row.loc.id)}>
-                            {row.statut === 'paiement_probable' && <Zap className="mr-2 h-3.5 w-3.5" />}
+                          <Button
+                            variant={row.statut === 'paiement_probable' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setTargetLocataire(row.loc.id)}
+                          >
+                            {row.statut === 'paiement_probable' && <Zap className="mr-1.5 h-3 w-3" />}
                             Affecter
                           </Button>
                         )}
                       </td>
-                    </tr>
+                    </motion.tr>
                   )
                 })}
               </tbody>
-            </table>
+            </motion.table>
           </div>
         </CardContent>
       </Card>
@@ -281,24 +267,31 @@ export function Reconciliation() {
       {mouvementsNonReconnus.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Mouvements non reconnus ({mouvementsNonReconnus.length})</CardTitle>
+            <CardTitle>
+              Mouvements non reconnus
+              <span className="ml-2 inline-flex h-5 items-center rounded-full bg-amber-100 px-2 text-[11px] font-semibold text-amber-700">
+                {mouvementsNonReconnus.length}
+              </span>
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="overflow-x-auto">
               <table className="table-pro">
                 <thead>
                   <tr>
-                    {['Date', 'Donneur', 'IBAN', 'Communication', 'Montant', 'Score', 'Action'].map(h => <th key={h}>{h}</th>)}
+                    {['Date', 'Donneur', 'IBAN', 'Communication', 'Montant', 'Score', 'Action'].map(h => (
+                      <th key={h}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {mouvementsNonReconnus.map(m => (
                     <tr key={m.id}>
-                      <td>{dateFr(m.operation_date)}</td>
-                      <td className="max-w-[160px] truncate">{m.counterparty_name ?? '—'}</td>
-                      <td className="font-mono text-xs">{m.counterparty_iban ?? '—'}</td>
+                      <td className="text-slate-500">{dateFr(m.operation_date)}</td>
+                      <td className="max-w-[160px] truncate font-medium text-slate-950">{m.counterparty_name ?? '—'}</td>
+                      <td className="font-mono text-[11px] text-slate-400">{m.counterparty_iban ?? '—'}</td>
                       <td className="max-w-[200px] truncate text-slate-500">{m.communication ?? '—'}</td>
-                      <td className="font-medium text-emerald-700">{eur(m.amount)}</td>
+                      <td className="font-semibold text-emerald-600">{eur(m.amount)}</td>
                       <td>
                         {m.match_score !== null && (
                           <Badge variant={m.match_score >= 90 ? 'success' : m.match_score >= 60 ? 'warning' : 'secondary'}>
@@ -318,13 +311,20 @@ export function Reconciliation() {
             </div>
 
             {(selectedMouvement || targetLocataire) && (
-              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <h3 className="font-medium text-slate-950">Affectation manuelle</h3>
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-5"
+              >
+                <h3 className="text-sm font-semibold text-slate-950">Affectation manuelle</h3>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Mouvement</label>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-500">Mouvement</label>
                     <Select value={selectedMouvement} onValueChange={setSelectedMouvement}>
-                      <SelectTrigger><SelectValue placeholder="Choisir un mouvement" /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choisir un mouvement" />
+                      </SelectTrigger>
                       <SelectContent>
                         {mouvementsNonReconnus.map(m => (
                           <SelectItem key={m.id} value={m.id}>
@@ -334,10 +334,12 @@ export function Reconciliation() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Locataire</label>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-500">Locataire</label>
                     <Select value={targetLocataire} onValueChange={setTargetLocataire}>
-                      <SelectTrigger><SelectValue placeholder="Choisir un locataire" /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choisir un locataire" />
+                      </SelectTrigger>
                       <SelectContent>
                         {locataires.map(l => (
                           <SelectItem key={l.id} value={l.id}>{l.nom_complet}</SelectItem>
@@ -345,14 +347,19 @@ export function Reconciliation() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Mois concerné</label>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-500">Mois concerné</label>
                     <Input type="month" value={targetMois} onChange={e => setTargetMois(e.target.value)} />
                   </div>
                 </div>
 
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={memoriser} onChange={e => setMemoriser(e.target.checked)} className="rounded" />
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={memoriser}
+                    onChange={e => setMemoriser(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
                   Mémoriser cette correspondance (IBAN/nom → locataire)
                 </label>
 
@@ -361,13 +368,16 @@ export function Reconciliation() {
                     onClick={() => affecterMutation.mutate()}
                     disabled={!selectedMouvement || !targetLocataire || affecterMutation.isPending}
                   >
-                    {affecterMutation.isPending ? 'Création…' : isDemoMode ? 'Créer (démo)' : 'Créer le paiement'}
+                    {affecterMutation.isPending ? 'Création…' : 'Créer le paiement'}
                   </Button>
-                  <Button variant="outline" onClick={() => { setSelectedMouvement(''); setTargetLocataire('') }}>
+                  <Button
+                    variant="outline"
+                    onClick={() => { setSelectedMouvement(''); setTargetLocataire('') }}
+                  >
                     Annuler
                   </Button>
                 </div>
-              </div>
+              </motion.div>
             )}
           </CardContent>
         </Card>

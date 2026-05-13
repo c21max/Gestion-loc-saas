@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase, isDemoMode } from '@/lib/supabase'
+import { isDemoMode } from '@/lib/supabase'
 import { DEMO_AGENCY_SETTINGS } from '@/lib/demo-data'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,9 @@ import { useToast } from '@/hooks/use-toast'
 import { RefreshCw } from 'lucide-react'
 import type { AgencySettings } from '@/types/database'
 import { useAuth } from '@/lib/auth'
+import { queryKeys } from '@/api/queryKeys'
+import { getAgencySettings } from '@/api/decomptes.api'
+import { generateExpectedRents, saveAgencySettings } from '@/api/settings.api'
 
 export function Parametres() {
   const { toast } = useToast()
@@ -19,13 +22,12 @@ export function Parametres() {
   const [form, setForm] = useState<Partial<AgencySettings>>({})
 
   const { data, isLoading } = useQuery({
-    queryKey: ['agency-settings', agencyId],
+    queryKey: queryKeys.agencySettings(agencyId),
     enabled: isDemoMode || Boolean(agencyId),
     queryFn: async () => {
       if (isDemoMode) return DEMO_AGENCY_SETTINGS
 
-      const { data } = await supabase.from('agency_settings').select('*').eq('agency_id', agencyId).single()
-      return data as AgencySettings | null
+      return getAgencySettings(agencyId)
     },
   })
 
@@ -37,19 +39,12 @@ export function Parametres() {
         toast({ title: 'Mode démo', description: 'Connectez Supabase pour enregistrer les paramètres.' })
         return
       }
-      if (form.id) {
-        const { error } = await supabase.from('agency_settings').update(form).eq('id', form.id).eq('agency_id', agencyId)
-        if (error) throw error
-      } else {
-        if (!agencyId) throw new Error('Aucune agence active')
-        const { error } = await supabase.from('agency_settings').insert({ ...form, agency_id: agencyId, nom: form.nom ?? 'Mon Agence' })
-        if (error) throw error
-      }
+      await saveAgencySettings(agencyId, form)
     },
     onSuccess: () => {
       if (!isDemoMode) {
         toast({ title: 'Paramètres enregistrés' })
-        qc.invalidateQueries({ queryKey: ['agency-settings', agencyId] })
+        qc.invalidateQueries({ queryKey: queryKeys.agencySettings(agencyId) })
       }
     },
     onError: (err: Error) => toast({ title: 'Erreur', description: err.message, variant: 'destructive' }),
@@ -61,8 +56,7 @@ export function Parametres() {
         toast({ title: 'Mode démo', description: 'Connectez Supabase pour régénérer les loyers attendus.' })
         return
       }
-      const { error } = await supabase.rpc('generate_expected_rents', { months_ahead: 3 })
-      if (error) throw error
+      await generateExpectedRents(3)
     },
     onSuccess: () => {
       if (!isDemoMode) toast({ title: 'Loyers attendus régénérés', description: 'Mise à jour sur 12 mois passés + 3 mois futurs.' })

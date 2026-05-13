@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase, isDemoMode } from '@/lib/supabase'
+import { isDemoMode } from '@/lib/supabase'
 import { DEMO_PROPRIETAIRES } from '@/lib/demo-data'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom'
 import { useToast } from '@/hooks/use-toast'
 import type { Proprietaire, ProprietaireType } from '@/types/database'
 import { useAuth } from '@/lib/auth'
+import { listProprietaires, saveProprietaire } from '@/api/proprietaires.api'
 
 export function Proprietaires() {
   const { toast } = useToast()
@@ -29,13 +30,7 @@ export function Proprietaires() {
     queryFn: async () => {
       if (isDemoMode) return DEMO_PROPRIETAIRES
 
-      const { data, error } = await supabase
-        .from('proprietaires')
-        .select('*, biens (id)')
-        .eq('agency_id', agencyId)
-        .order('nom_complet')
-      if (error) throw error
-      return data
+      return listProprietaires(agencyId)
     },
   })
 
@@ -45,15 +40,7 @@ export function Proprietaires() {
         toast({ title: 'Mode démo', description: 'Connectez Supabase pour activer cette action.' })
         return
       }
-      if (!form.nom_complet) throw new Error('Nom obligatoire')
-      if (form.id) {
-        const { error } = await supabase.from('proprietaires').update(form).eq('id', form.id).eq('agency_id', agencyId)
-        if (error) throw error
-      } else {
-        if (!agencyId) throw new Error('Aucune agence active')
-        const { error } = await supabase.from('proprietaires').insert({ ...form, agency_id: agencyId } as Omit<Proprietaire, 'id' | 'created_at' | 'updated_at'>)
-        if (error) throw error
-      }
+      await saveProprietaire(agencyId, form)
     },
     onSuccess: () => {
       if (!isDemoMode) {

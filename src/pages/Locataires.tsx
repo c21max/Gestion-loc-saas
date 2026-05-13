@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { supabase, isDemoMode } from '@/lib/supabase'
+import { isDemoMode } from '@/lib/supabase'
 import { DEMO_LOCATAIRES_AVEC_UNITS } from '@/lib/demo-data'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +15,12 @@ import { currentMonthStr } from '@/lib/format'
 import { useAuth } from '@/lib/auth'
 import { useToast } from '@/hooks/use-toast'
 import { Link } from 'react-router-dom'
+import {
+  createLocataire,
+  listCurrentTenantPaymentTotals,
+  listLocatairesWithUnits,
+  listRentalUnitsForTenantSelect,
+} from '@/api/locataires.api'
 
 export function Locataires() {
   const { toast } = useToast()
@@ -40,12 +46,7 @@ export function Locataires() {
     queryFn: async () => {
       if (isDemoMode) return DEMO_LOCATAIRES_AVEC_UNITS
 
-      const { data } = await supabase
-        .from('locataires')
-        .select('*, rental_units (libelle, loyer_mensuel, charges_mensuelles, biens (adresse, proprietaires (nom_complet)))')
-        .eq('agency_id', agencyId)
-        .order('nom_complet')
-      return data ?? []
+      return listLocatairesWithUnits(agencyId)
     },
   })
 
@@ -55,14 +56,7 @@ export function Locataires() {
     queryFn: async () => {
       if (isDemoMode) return []
 
-      const { data, error } = await supabase
-        .from('rental_units')
-        .select('id, libelle, loyer_mensuel, charges_mensuelles, biens (id, adresse, proprietaire_id)')
-        .eq('agency_id', agencyId)
-        .eq('actif', true)
-        .order('libelle')
-      if (error) throw error
-      return data ?? []
+      return listRentalUnitsForTenantSelect(agencyId)
     },
   })
 
@@ -72,12 +66,7 @@ export function Locataires() {
     queryFn: async () => {
       if (isDemoMode) return []
 
-      const { data } = await supabase
-        .from('paiements')
-        .select('locataire_id, total_percu')
-        .eq('agency_id', agencyId)
-        .eq('mois_concerne', moisIso)
-      return data ?? []
+      return listCurrentTenantPaymentTotals(agencyId, moisIso)
     },
   })
 
@@ -87,23 +76,7 @@ export function Locataires() {
         toast({ title: 'Mode démo', description: 'Connectez Supabase pour activer cette action.' })
         return
       }
-      if (!agencyId) throw new Error('Aucune agence active')
-      if (!form.rental_unit_id) throw new Error('Unité locative obligatoire')
-      if (!form.nom_complet.trim()) throw new Error('Nom obligatoire')
-
-      const { error } = await supabase.from('locataires').insert({
-        agency_id: agencyId,
-        rental_unit_id: form.rental_unit_id,
-        nom_complet: form.nom_complet.trim(),
-        email: form.email.trim() || null,
-        telephone: form.telephone.trim() || null,
-        date_debut_bail: form.date_debut_bail || null,
-        date_fin_bail: form.date_fin_bail || null,
-        statut: 'actif',
-        loyer_mensuel_override: form.loyer_mensuel_override ? Number(form.loyer_mensuel_override) : null,
-        charges_mensuelles_override: form.charges_mensuelles_override ? Number(form.charges_mensuelles_override) : null,
-      })
-      if (error) throw error
+      await createLocataire(agencyId, form)
     },
     onSuccess: () => {
       if (!isDemoMode) {
