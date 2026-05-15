@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Plus, ChevronRight, Users } from 'lucide-react'
+import { Pencil, Plus, ChevronRight, Users } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useToast } from '@/hooks/use-toast'
 import type { Proprietaire, ProprietaireType } from '@/types/database'
@@ -23,6 +23,19 @@ export function Proprietaires() {
   const agencyId = agency?.id
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<Partial<Proprietaire>>({ type_proprietaire: 'personne_physique' })
+  const resetForm = () => setForm({ type_proprietaire: 'personne_physique' })
+  const openCreateDialog = () => {
+    resetForm()
+    setOpen(true)
+  }
+  const openEditDialog = (proprietaire: Proprietaire) => {
+    setForm(proprietaire)
+    setOpen(true)
+  }
+  const handleDialogOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) resetForm()
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['proprietaires', agencyId],
@@ -48,7 +61,7 @@ export function Proprietaires() {
         qc.invalidateQueries({ queryKey: ['proprietaires', agencyId] })
       }
       setOpen(false)
-      setForm({ type_proprietaire: 'personne_physique' })
+      resetForm()
     },
     onError: (err: Error) => toast({ title: 'Erreur', description: err.message, variant: 'destructive' }),
   })
@@ -68,7 +81,7 @@ export function Proprietaires() {
           <h1 className="text-3xl font-semibold tracking-tight text-slate-950 md:text-4xl">Propriétaires</h1>
           <p className="mt-2 text-sm text-slate-500">Contacts, sociétés et indivisions liés au portefeuille.</p>
         </div>
-        <Button onClick={() => { setForm({ type_proprietaire: 'personne_physique' }); setOpen(true) }}>
+        <Button onClick={openCreateDialog}>
           <Plus className="mr-2 h-4 w-4" />Ajouter
         </Button>
       </div>
@@ -87,9 +100,14 @@ export function Proprietaires() {
                     <Badge variant="outline" className="mt-1 text-xs">{typeLabels[p.type_proprietaire as ProprietaireType]}</Badge>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link to={`/proprietaires/${p.id}`}><ChevronRight className="h-4 w-4" /></Link>
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => openEditDialog(p)} aria-label={`Modifier ${p.nom_complet}`}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link to={`/proprietaires/${p.id}`}><ChevronRight className="h-4 w-4" /></Link>
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground space-y-1">
@@ -102,7 +120,7 @@ export function Proprietaires() {
         ))}
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{form.id ? 'Modifier' : 'Nouveau propriétaire'}</DialogTitle>
@@ -151,7 +169,7 @@ export function Proprietaires() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Annuler</Button>
+            <Button variant="outline" onClick={() => handleDialogOpenChange(false)}>Annuler</Button>
             <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
               {saveMutation.isPending ? 'Enregistrement…' : isDemoMode ? 'Enregistrer (démo)' : 'Enregistrer'}
             </Button>

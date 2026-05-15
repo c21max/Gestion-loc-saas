@@ -1,21 +1,172 @@
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
-import type { OwnerStatement, Bien, Proprietaire, AgencySettings } from '@/types/database'
-import { eur, moisFr, dateFr } from '@/lib/format'
+import { Document, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import type { AgencySettings, Bien, OwnerStatement, Proprietaire } from '@/types/database'
+import { dateFr, eur, moisFr } from '@/lib/format'
 
 const s = StyleSheet.create({
-  page: { padding: 40, fontFamily: 'Helvetica', fontSize: 10, color: '#1a1a1a' },
-  headerAgence: { backgroundColor: '#1e3a5f', color: 'white', padding: 16, marginBottom: 20, borderRadius: 4 },
-  headerTitle: { fontSize: 18, fontWeight: 'bold', color: 'white' },
-  headerSubtitle: { fontSize: 10, color: '#94b4d1', marginTop: 4 },
-  section: { marginBottom: 16 },
-  sectionTitle: { fontSize: 11, fontWeight: 'bold', backgroundColor: '#f1f5f9', padding: '6 8', marginBottom: 6, borderRadius: 2 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  label: { color: '#6b7280' },
-  value: { fontWeight: 'bold' },
-  divider: { borderBottom: '1pt solid #e5e7eb', marginVertical: 8 },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderTop: '2pt solid #1e3a5f', marginTop: 8 },
-  totalLabel: { fontSize: 12, fontWeight: 'bold' },
-  totalValue: { fontSize: 12, fontWeight: 'bold', color: '#166534' },
+  page: {
+    paddingTop: 34,
+    paddingHorizontal: 38,
+    paddingBottom: 28,
+    fontFamily: 'Helvetica',
+    fontSize: 9.5,
+    color: '#111827',
+    backgroundColor: '#ffffff',
+  },
+  topBar: {
+    height: 4,
+    backgroundColor: '#1f4e99',
+    marginHorizontal: -38,
+    marginTop: -34,
+    marginBottom: 24,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 24,
+  },
+  brandWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  logo: {
+    width: 58,
+    height: 58,
+    objectFit: 'contain',
+  },
+  brandName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1f4e99',
+  },
+  brandMeta: {
+    marginTop: 2,
+    color: '#4b5563',
+    lineHeight: 1.35,
+  },
+  docMeta: {
+    minWidth: 170,
+    alignItems: 'flex-end',
+  },
+  docTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  periodPill: {
+    marginTop: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: '#eff6ff',
+    color: '#1d4ed8',
+    borderRadius: 3,
+    fontWeight: 'bold',
+  },
+  infoGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+  },
+  infoCard: {
+    flex: 1,
+    border: '1pt solid #d1d5db',
+    borderRadius: 4,
+    padding: 12,
+    minHeight: 76,
+  },
+  infoLabel: {
+    fontSize: 8,
+    textTransform: 'uppercase',
+    color: '#6b7280',
+    marginBottom: 6,
+  },
+  infoMain: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginBottom: 3,
+  },
+  muted: {
+    color: '#4b5563',
+    lineHeight: 1.35,
+  },
+  sectionTitle: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  table: {
+    border: '1pt solid #d1d5db',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 18,
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#f3f4f6',
+    borderBottom: '1pt solid #d1d5db',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    borderBottom: '1pt solid #e5e7eb',
+  },
+  tableRowLast: {
+    flexDirection: 'row',
+  },
+  cellLabel: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  cellValue: {
+    width: 108,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    textAlign: 'right',
+  },
+  headerCell: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: '#4b5563',
+  },
+  negative: {
+    color: '#b91c1c',
+    fontWeight: 'bold',
+  },
+  positive: {
+    color: '#166534',
+    fontWeight: 'bold',
+  },
+  summary: {
+    border: '1pt solid #1f4e99',
+    borderRadius: 4,
+    padding: 14,
+    backgroundColor: '#f8fbff',
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  summaryLabel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#1f2937',
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  footer: {
+    marginTop: 24,
+    paddingTop: 9,
+    borderTop: '1pt solid #e5e7eb',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    color: '#6b7280',
+    fontSize: 8,
+  },
 })
 
 interface Props {
@@ -28,89 +179,92 @@ interface Props {
 
 export function DecomptePDF({ statement: stmt, bien, proprietaire, agencySettings, mois }: Props) {
   const agencyName = agencySettings?.nom ?? 'Gestion Locative'
+  const showDefaultImmoTassoulLogo = agencyName.toLowerCase().includes('immo tassoul')
+  const logoSrc = agencySettings?.logo_url ?? (showDefaultImmoTassoulLogo ? '/immo-tassoul-logo.png' : null)
+  const locationLine = [agencySettings?.code_postal, agencySettings?.ville].filter(Boolean).join(' ')
+  const ownerLocationLine = [proprietaire.code_postal, proprietaire.ville].filter(Boolean).join(' ')
+
+  const rows = [
+    { label: 'Total perçu', value: stmt.total_percu, tone: 'positive' as const },
+    { label: 'Frais refacturables', value: stmt.total_frais_tvac, tone: 'negative' as const },
+    { label: 'Honoraires HTVA', value: stmt.honoraires_htva, tone: 'neutral' as const },
+    { label: `TVA honoraires (${agencySettings?.taux_tva ?? 21}%)`, value: stmt.honoraires_tva, tone: 'neutral' as const },
+    { label: 'Honoraires TVAC', value: stmt.honoraires_tvac, tone: 'negative' as const },
+  ]
 
   return (
     <Document>
       <Page size="A4" style={s.page}>
-        {/* En-tête agence */}
-        <View style={s.headerAgence}>
-          <Text style={s.headerTitle}>{agencyName}</Text>
-          <Text style={s.headerSubtitle}>Décompte propriétaire — {moisFr(mois)}</Text>
-          {agencySettings?.email && <Text style={s.headerSubtitle}>{agencySettings.email}</Text>}
-          {agencySettings?.telephone && <Text style={s.headerSubtitle}>{agencySettings.telephone}</Text>}
-          {agencySettings?.numero_tva && <Text style={s.headerSubtitle}>TVA {agencySettings.numero_tva}</Text>}
-        </View>
+        <View style={s.topBar} />
 
-        {/* Bloc propriétaire */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Propriétaire</Text>
-          <Text>{proprietaire.nom_complet}</Text>
-          {proprietaire.adresse && <Text style={{ color: '#6b7280' }}>{proprietaire.adresse}</Text>}
-          {proprietaire.code_postal && proprietaire.ville && (
-            <Text style={{ color: '#6b7280' }}>{proprietaire.code_postal} {proprietaire.ville}</Text>
-          )}
-        </View>
-
-        {/* Bloc bien */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Bien immobilier</Text>
-          <Text>{bien.adresse}</Text>
-          {bien.type_bien && <Text style={{ color: '#6b7280' }}>{bien.type_bien}</Text>}
-          <Text style={{ color: '#6b7280', marginTop: 2 }}>Période : {moisFr(mois)}</Text>
-        </View>
-
-        {/* Paiements reçus */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Recettes du mois</Text>
-          <View style={s.row}>
-            <Text style={s.label}>Total perçu (loyers + charges)</Text>
-            <Text style={s.value}>{eur(stmt.total_percu)}</Text>
-          </View>
-        </View>
-
-        {/* Frais */}
-        {stmt.total_frais_tvac > 0 && (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Frais refacturables</Text>
-            <View style={s.row}>
-              <Text style={s.label}>Total frais (TVAC)</Text>
-              <Text style={{ ...s.value, color: '#dc2626' }}>- {eur(stmt.total_frais_tvac)}</Text>
+        <View style={s.header}>
+          <View style={s.brandWrap}>
+            {logoSrc && <Image src={logoSrc} style={s.logo} />}
+            <View>
+              <Text style={s.brandName}>{agencyName}</Text>
+              {agencySettings?.adresse && <Text style={s.brandMeta}>{agencySettings.adresse}</Text>}
+              {locationLine && <Text style={s.brandMeta}>{locationLine}</Text>}
+              {agencySettings?.telephone && <Text style={s.brandMeta}>{agencySettings.telephone}</Text>}
+              {agencySettings?.email && <Text style={s.brandMeta}>{agencySettings.email}</Text>}
+              {agencySettings?.numero_tva && <Text style={s.brandMeta}>TVA {agencySettings.numero_tva}</Text>}
             </View>
           </View>
-        )}
 
-        {/* Honoraires */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Honoraires de gestion</Text>
-          <View style={s.row}>
-            <Text style={s.label}>Honoraires HTVA</Text>
-            <Text>{eur(stmt.honoraires_htva)}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.label}>TVA ({agencySettings?.taux_tva ?? 21}%)</Text>
-            <Text>{eur(stmt.honoraires_tva)}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.label}>Total honoraires (TVAC)</Text>
-            <Text style={{ ...s.value, color: '#dc2626' }}>- {eur(stmt.honoraires_tvac)}</Text>
+          <View style={s.docMeta}>
+            <Text style={s.docTitle}>Décompte propriétaire</Text>
+            <Text style={s.periodPill}>{moisFr(mois)}</Text>
           </View>
         </View>
 
-        <View style={s.divider} />
+        <View style={s.infoGrid}>
+          <View style={s.infoCard}>
+            <Text style={s.infoLabel}>Propriétaire</Text>
+            <Text style={s.infoMain}>{proprietaire.nom_complet}</Text>
+            {proprietaire.adresse && <Text style={s.muted}>{proprietaire.adresse}</Text>}
+            {ownerLocationLine && <Text style={s.muted}>{ownerLocationLine}</Text>}
+          </View>
 
-        {/* Solde final */}
-        <View style={s.totalRow}>
-          <Text style={s.totalLabel}>SOLDE À VIRER AU PROPRIÉTAIRE</Text>
-          <Text style={{ ...s.totalLabel, color: stmt.solde_proprietaire >= 0 ? '#166534' : '#dc2626' }}>
-            {eur(stmt.solde_proprietaire)}
-          </Text>
+          <View style={s.infoCard}>
+            <Text style={s.infoLabel}>Bien immobilier</Text>
+            <Text style={s.infoMain}>{bien.adresse}</Text>
+            {bien.type_bien && <Text style={s.muted}>{bien.type_bien}</Text>}
+          </View>
         </View>
 
-        {/* Footer */}
-        <View style={{ marginTop: 40, borderTop: '1pt solid #e5e7eb', paddingTop: 8 }}>
-          <Text style={{ color: '#9ca3af', fontSize: 8 }}>
-            Document généré le {dateFr(stmt.genere_le ?? new Date().toISOString())} — {agencyName}
-          </Text>
+        <Text style={s.sectionTitle}>Synthèse du décompte</Text>
+        <View style={s.table}>
+          <View style={s.tableHeader}>
+            <Text style={[s.cellLabel, s.headerCell]}>Poste</Text>
+            <Text style={[s.cellValue, s.headerCell]}>Montant</Text>
+          </View>
+          {rows.map((row, index) => (
+            <View key={row.label} style={index === rows.length - 1 ? s.tableRowLast : s.tableRow}>
+              <Text style={s.cellLabel}>{row.label}</Text>
+              <Text
+                style={[
+                  s.cellValue,
+                  row.tone === 'negative' ? s.negative : row.tone === 'positive' ? s.positive : {},
+                ]}
+              >
+                {row.tone === 'negative' && row.value > 0 ? '- ' : ''}
+                {eur(row.value)}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={s.summary}>
+          <View style={s.summaryRow}>
+            <Text style={s.summaryLabel}>Solde à virer au propriétaire</Text>
+            <Text style={[s.summaryValue, stmt.solde_proprietaire >= 0 ? s.positive : s.negative]}>
+              {eur(stmt.solde_proprietaire)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={s.footer}>
+          <Text>Document généré le {dateFr(stmt.genere_le ?? new Date().toISOString())}</Text>
+          <Text>{agencyName}</Text>
         </View>
       </Page>
     </Document>
